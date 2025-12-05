@@ -1,0 +1,140 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\title{Practical Work 2: RPC File Transfer}
+\author{Pham Huu Minh - 23BI14302}
+\date{\today}
+
+\lstdefinestyle{code}{
+  basicstyle=\ttfamily\small,
+  numbers=left,
+  numberstyle=\tiny,
+  stepnumber=1,
+  numbersep=5pt,
+  frame=single,
+  breaklines=true,
+  showstringspaces=false,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray}
+}
+
+\begin{document}
+
+\maketitle
+
+\section{Objective}
+Upgrade the existing TCP file transfer implementation to a Remote Procedure Call (RPC) based service that allows a client to request a file from the server and save it locally.
+
+\section{Design}
+\subsection{RPC Interface}
+\begin{itemize}
+  \item Program: \texttt{FILE\_TRANSFER\_PROG} with version \texttt{FILE\_TRANSFER\_VERS}.
+  \item Procedure: \texttt{GET\_FILE(filename)} returns \texttt{file\_result} containing \texttt{status} and \texttt{data}.
+  \item Constraints: Maximum file size is 1 MB.
+\end{itemize}
+
+\subsection{Data Flow}
+\begin{enumerate}
+  \item Client sends file name via RPC call.
+  \item Server reads file, enforces size limit, and returns bytes or an error status.
+  \item Client writes received bytes to local disk.
+\end{enumerate}
+
+\subsection{Figure: System Overview}
+\begin{center}
+  \fbox{\parbox{0.9\linewidth}{
+    \textbf{Client} $\rightarrow$ RPC Request (filename) $\rightarrow$ \textbf{Server}\\[4pt]
+    \textbf{Server} $\rightarrow$ RPC Reply (status, data) $\rightarrow$ \textbf{Client}
+  }}
+\end{center}
+
+\section{Organization}
+\begin{itemize}
+  \item \texttt{file\_transfer.x}: RPC interface definition (rpcgen input).
+  \item \texttt{file\_transfer\_clnt.c}, \texttt{file\_transfer\_svc.c}, \texttt{file\_transfer\_xdr.c}: Generated stubs/XDR.
+  \item \texttt{client.c}: RPC client executable.
+  \item \texttt{server\_impl.c}: Server-side implementation of \texttt{GET\_FILE}.
+  \item \texttt{test.txt}, \texttt{test\_copy.txt}: Sample files for validation.
+\end{itemize}
+
+\subsection{Figure: Module Layout}
+\begin{center}
+  \fbox{\parbox{0.9\linewidth}{
+    Interface: file\_transfer.x $\rightarrow$ rpcgen $\rightarrow$ stubs\\[4pt]
+    Server: file\_transfer\_svc.c + server\_impl.c\\[4pt]
+    Client: file\_transfer\_clnt.c + client.c
+  }}
+\end{center}
+
+\section{Implementation}
+\subsection{Server Core (excerpt)}
+\begin{lstlisting}[style=code,language=C,caption={Server: get_file_1_svc}]
+file_result *get_file_1_svc(filename_t *name, struct svc_req *rqstp)
+{
+    static file_result res;
+    FILE *f;
+    long len;
+    char *buf;
+
+    if (res.data.filedata_t_val) {
+        free(res.data.filedata_t_val);
+        res.data.filedata_t_val = NULL;
+        res.data.filedata_t_len = 0;
+    }
+    res.status = 0;
+
+    f = fopen(*name, "rb");
+    if (!f) { res.status = errno; return &res; }
+
+    fseek(f, 0, SEEK_END);
+    len = ftell(f);
+    if (len < 0 || len > MAXFILESIZE) { res.status = EFBIG; fclose(f); return &res; }
+
+    buf = malloc(len);
+    rewind(f);
+    if (fread(buf, 1, len, f) != (size_t)len) { res.status = EIO; free(buf); fclose(f); return &res; }
+    fclose(f);
+
+    res.data.filedata_t_val = buf;
+    res.data.filedata_t_len = (u_int)len;
+    return &res;
+}
+\end{lstlisting}
+
+\subsection{Client Core (excerpt)}
+\begin{lstlisting}[style=code,language=C,caption={Client: download flow}]
+int main(int argc, char *argv[])
+{
+    CLIENT *cl = clnt_create(argv[1], FILE_TRANSFER_PROG, FILE_TRANSFER_VERS, "tcp");
+    file_result *res = get_file_1(&argv[2], cl);
+    FILE *fp = fopen(argv[3], "wb");
+
+    fwrite(res->data.filedata_t_val, 1, res->data.filedata_t_len, fp);
+    fclose(fp);
+    clnt_destroy(cl);
+    return 0;
+}
+\end{lstlisting}
+
+\section{Task Division}
+This is an individual work completed by Pham Huu Minh (23BI14302). All tasks were completed individually:
+\begin{itemize}
+  \item RPC interface design (\texttt{file\_transfer.x}) and server implementation.
+  \item Client implementation and testing.
+  \item Build scripts, documentation, and report.
+\end{itemize}
+
+\section{Testing}
+\begin{itemize}
+  \item Start RPC server: \texttt{./rpc\_server}
+  \item Run client: \texttt{./rpc\_client <host> test.txt downloaded.txt}
+  \item Verify: compare \texttt{test.txt} and \texttt{downloaded.txt} (e.g., \texttt{diff} or checksum).
+\end{itemize}
+
+\end{document}
+
